@@ -166,10 +166,21 @@ export function parseRequest(request: unknown): ParsedRpcRequest {
 			? request.method
 			: undefined;
 	const params = "params" in request ? request.params : undefined;
-	const rawId = "id" in request ? request.id : undefined;
+	const idPresent = "id" in request;
+	const rawId = idPresent ? request.id : undefined;
+	// When present, `id` MUST be a String, Number, or Null (JSON-RPC 2.0 §4). A
+	// present-but-wrongly-typed id (boolean/object/array) is an Invalid Request —
+	// NOT silently coerced to null, which would let a malformed envelope execute.
+	const idValid =
+		!idPresent ||
+		rawId === null ||
+		typeof rawId === "string" ||
+		typeof rawId === "number";
 	const id: JsonRpcId =
-		typeof rawId === "string" || typeof rawId === "number" ? rawId : null;
-	if (jsonrpc !== "2.0" || !method) {
+		rawId === null || typeof rawId === "string" || typeof rawId === "number"
+			? rawId
+			: null;
+	if (jsonrpc !== "2.0" || !method || !idValid) {
 		return {
 			ok: false,
 			response: buildError(RpcErrorCode.InvalidRequest, "Invalid Request", id),

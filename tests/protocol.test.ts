@@ -75,6 +75,24 @@ describe("comet/protocol > parseRequest", () => {
 			expect(parsed.response.id).toBe(5);
 		}
 	});
+
+	it("rejects a present-but-wrongly-typed id (not coerced to null)", () => {
+		for (const badId of [true, {}, [1]]) {
+			const parsed = parseRequest({ jsonrpc: "2.0", method: "m", id: badId });
+			expect(parsed.ok).toBe(false);
+			if (!parsed.ok) {
+				expect(parsed.response.error.code).toBe(RpcErrorCode.InvalidRequest);
+				expect(parsed.response.id).toBeNull();
+			}
+		}
+	});
+
+	it("accepts an absent id and an explicit null id", () => {
+		expect(parseRequest({ jsonrpc: "2.0", method: "m" }).ok).toBe(true);
+		expect(parseRequest({ jsonrpc: "2.0", method: "m", id: null }).ok).toBe(
+			true,
+		);
+	});
 });
 
 describe("comet/protocol > isNotification", () => {

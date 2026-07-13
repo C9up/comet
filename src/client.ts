@@ -95,13 +95,25 @@ export function createRpcClient(options: RpcClientOptions): RpcClient {
 			const res = await transport(url, buildRequest(method, params, id), {
 				signal: callOptions?.signal,
 			});
-			if (!isObject(res)) {
+			// Envelope conformance (JSON-RPC 2.0 §5): the version must match and the
+			// id MUST echo the one we sent — otherwise a stale, mis-routed, or
+			// forged response could satisfy the wrong call. Reject before trusting
+			// `result`.
+			if (!isObject(res) || res.jsonrpc !== "2.0" || res.id !== id) {
 				throw new RpcError(
 					RpcErrorCode.InternalError,
-					`Malformed JSON-RPC response for "${method}"`,
+					`Malformed or mismatched JSON-RPC response for "${method}" (bad jsonrpc/id envelope)`,
 				);
 			}
 			if (res.error !== undefined) throw toRpcError(res.error);
+			// A conformant success response carries `result` (any JSON value,
+			// including null) and no error — neither key present is malformed.
+			if (!("result" in res)) {
+				throw new RpcError(
+					RpcErrorCode.InternalError,
+					`JSON-RPC response for "${method}" has neither result nor error`,
+				);
+			}
 			// Result boundary — the same unchecked `T` assertion HTTP clients use,
 			// with `parse` as the cast-free, runtime-validated escape hatch.
 			return callOptions?.parse

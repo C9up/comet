@@ -37,6 +37,36 @@ describe("comet/client > createRpcClient", () => {
 		expect(isObject(sent) && typeof sent.id === "number").toBe(true);
 	});
 
+	it("rejects a response whose id does not match the request (stale/misrouted)", async () => {
+		const transport: RpcTransport = async () => ({
+			jsonrpc: "2.0",
+			result: { valid: true },
+			id: 9999, // never the id this client sent
+		});
+		const rpc = createRpcClient({ transport });
+		await expect(rpc.call("task.validate")).rejects.toThrow(
+			/mismatched JSON-RPC response/,
+		);
+	});
+
+	it("rejects a response missing the jsonrpc version", async () => {
+		const transport: RpcTransport = async (_url, body) => ({
+			result: { valid: true },
+			id: reqId(body),
+		});
+		const rpc = createRpcClient({ transport });
+		await expect(rpc.call("m")).rejects.toThrow(/bad jsonrpc\/id envelope/);
+	});
+
+	it("rejects a response carrying neither result nor error", async () => {
+		const transport: RpcTransport = async (_url, body) => ({
+			jsonrpc: "2.0",
+			id: reqId(body),
+		});
+		const rpc = createRpcClient({ transport });
+		await expect(rpc.call("m")).rejects.toThrow(/neither result nor error/);
+	});
+
 	it("throws RpcError (code + message + data) on a JSON-RPC error", async () => {
 		const transport = vi.fn(async (_url: string, body: unknown) => ({
 			jsonrpc: "2.0",
