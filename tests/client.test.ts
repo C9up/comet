@@ -157,3 +157,58 @@ describe("comet/client > createRpcClient", () => {
 		expect(transport).not.toHaveBeenCalled();
 	});
 });
+
+describe("comet > batch() checks the envelope call() checks", () => {
+	/** A transport answering with whatever the test hands it. */
+	const answering =
+		(responses: unknown[]): RpcTransport =>
+		async () =>
+			responses;
+
+	it("refuses a response that is not JSON-RPC 2.0", async () => {
+		const rpc = createRpcClient({
+			transport: answering([{ jsonrpc: "1.0", id: 0 }]),
+		});
+
+		// This came back as `{ ok: true, value: undefined }` — the single-call
+		// path refuses the same envelope.
+		const [result] = await rpc.batch([{ method: "a" }]);
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.error.message).toMatch(/jsonrpc version/);
+	});
+
+	it("refuses a success carrying neither result nor error", async () => {
+		const rpc = createRpcClient({
+			transport: answering([{ jsonrpc: "2.0", id: 0 }]),
+		});
+
+		const [result] = await rpc.batch([{ method: "a" }]);
+		expect(result.ok).toBe(false);
+		if (!result.ok)
+			expect(result.error.message).toMatch(/neither result nor error/);
+	});
+
+	it("refuses two responses claiming the same id", async () => {
+		const rpc = createRpcClient({
+			transport: answering([
+				{ jsonrpc: "2.0", result: "first", id: 0 },
+				{ jsonrpc: "2.0", result: "second", id: 0 },
+			]),
+		});
+
+		// Keeping the last silently let a response answer a call it was not for.
+		const [result] = await rpc.batch([{ method: "a" }]);
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.error.message).toMatch(/more than one/i);
+	});
+
+	it("still accepts a null result, which is a valid value", async () => {
+		const rpc = createRpcClient({
+			transport: answering([{ jsonrpc: "2.0", result: null, id: 0 }]),
+		});
+
+		expect(await rpc.batch([{ method: "a" }])).toEqual([
+			{ ok: true, value: null },
+		]);
+	});
+});

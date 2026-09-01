@@ -139,21 +139,43 @@ export function createRpcClient(options: RpcClientOptions): RpcClient {
 					"Malformed JSON-RPC batch response",
 				);
 			}
+			// Envelope conformance, per item, exactly as `call` applies it — this
+			// checked none of it, so `{ jsonrpc: "1.0", id: 0 }` came back as
+			// `{ ok: true, value: undefined }` where the single-call path would
+			// have refused it.
 			const byId = new Map<unknown, Record<string, unknown>>();
-			for (const item of res) if (isObject(item)) byId.set(item.id, item);
+			const duplicated = new Set<unknown>();
+			for (const item of res) {
+				if (!isObject(item)) continue;
+				// A repeated id is a malformed batch, and silently keeping the last
+				// one lets a response answer a call it was not for.
+				if (byId.has(item.id)) duplicated.add(item.id);
+				byId.set(item.id, item);
+			}
 			return calls.map((c, index) => {
+				const fail = (message: string): RpcResult => ({
+					ok: false,
+					error: new RpcError(RpcErrorCode.InternalError, message),
+				});
 				const envelope = byId.get(index);
-				if (!envelope) {
-					return {
-						ok: false,
-						error: new RpcError(
-							RpcErrorCode.InternalError,
-							`No response for "${c.method}"`,
-						),
-					};
+				if (!envelope) return fail(`No response for "${c.method}"`);
+				if (duplicated.has(index)) {
+					return fail(`More than one response carried id ${index}`);
+				}
+				if (envelope.jsonrpc !== "2.0") {
+					return fail(
+						`Malformed JSON-RPC response for "${c.method}" (bad jsonrpc version)`,
+					);
 				}
 				if (envelope.error !== undefined) {
 					return { ok: false, error: toRpcError(envelope.error) };
+				}
+				// A conformant success carries `result` — any JSON value, null
+				// included — so its absence is malformed, not an undefined value.
+				if (!("result" in envelope)) {
+					return fail(
+						`JSON-RPC response for "${c.method}" has neither result nor error`,
+					);
 				}
 				const value = c.parse ? c.parse(envelope.result) : envelope.result;
 				return { ok: true, value };
