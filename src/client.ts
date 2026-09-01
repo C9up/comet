@@ -105,10 +105,22 @@ export function createRpcClient(options: RpcClientOptions): RpcClient {
 					`Malformed or mismatched JSON-RPC response for "${method}" (bad jsonrpc/id envelope)`,
 				);
 			}
+			// §5: `result` and `error` are mutually exclusive — "Either the
+			// result member or error member MUST be included, but both members
+			// MUST NOT be included." A response carrying both is malformed, and
+			// reading the error out of it is guessing at which half the sender
+			// meant. Refused, the way a bad jsonrpc/id envelope already is.
+			const hasResult = "result" in res;
+			if (hasResult && res.error !== undefined) {
+				throw new RpcError(
+					RpcErrorCode.InternalError,
+					`Malformed JSON-RPC response for "${method}" (carries both result and error)`,
+				);
+			}
 			if (res.error !== undefined) throw toRpcError(res.error);
 			// A conformant success response carries `result` (any JSON value,
 			// including null) and no error — neither key present is malformed.
-			if (!("result" in res)) {
+			if (!hasResult) {
 				throw new RpcError(
 					RpcErrorCode.InternalError,
 					`JSON-RPC response for "${method}" has neither result nor error`,
@@ -167,12 +179,19 @@ export function createRpcClient(options: RpcClientOptions): RpcClient {
 						`Malformed JSON-RPC response for "${c.method}" (bad jsonrpc version)`,
 					);
 				}
+				const hasResult = "result" in envelope;
+				// §5: mutually exclusive. See the single-call path.
+				if (hasResult && envelope.error !== undefined) {
+					return fail(
+						`Malformed JSON-RPC response for "${c.method}" (carries both result and error)`,
+					);
+				}
 				if (envelope.error !== undefined) {
 					return { ok: false, error: toRpcError(envelope.error) };
 				}
 				// A conformant success carries `result` — any JSON value, null
 				// included — so its absence is malformed, not an undefined value.
-				if (!("result" in envelope)) {
+				if (!hasResult) {
 					return fail(
 						`JSON-RPC response for "${c.method}" has neither result nor error`,
 					);

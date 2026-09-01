@@ -58,6 +58,39 @@ describe("comet/client > createRpcClient", () => {
 		await expect(rpc.call("m")).rejects.toThrow(/bad jsonrpc\/id envelope/);
 	});
 
+	it("rejects a response carrying BOTH result and error", async () => {
+		// §5: "Either the result member or error member MUST be included, but
+		// both members MUST NOT be included." Reading the error out of such a
+		// response is guessing at which half the sender meant.
+		const transport: RpcTransport = async (_url, body) => ({
+			jsonrpc: "2.0",
+			id: reqId(body),
+			result: { valid: true },
+			error: { code: -32000, message: "also this" },
+		});
+		const rpc = createRpcClient({ transport });
+		await expect(rpc.call("m")).rejects.toThrow(
+			/carries both result and error/,
+		);
+	});
+
+	it("rejects a batch item carrying BOTH result and error", async () => {
+		const transport: RpcTransport = async () => [
+			{
+				jsonrpc: "2.0",
+				id: 0,
+				result: 1,
+				error: { code: -32000, message: "also this" },
+			},
+		];
+		const rpc = createRpcClient({ transport });
+		const [item] = await rpc.batch([{ method: "m" }]);
+		expect(item.ok).toBe(false);
+		expect(item.ok === false && item.error.message).toMatch(
+			/carries both result and error/,
+		);
+	});
+
 	it("rejects a response carrying neither result nor error", async () => {
 		const transport: RpcTransport = async (_url, body) => ({
 			jsonrpc: "2.0",
