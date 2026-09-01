@@ -1,6 +1,6 @@
 {
   "name": "@c9up/comet",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Comet — agnostic JSON-RPC 2.0 protocol + isomorphic, transport-injectable client for the Ream framework",
   "license": "MIT",
   "type": "module",
