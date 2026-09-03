@@ -1,7 +1,7 @@
 {
   "name": "@c9up/comet",
   "version": "0.1.3",
-  "description": "Comet — agnostic JSON-RPC 2.0 protocol + isomorphic, transport-injectable client for the Ream framework",
+  "description": "Comet \u2014 agnostic JSON-RPC 2.0 protocol + isomorphic, transport-injectable client for the Ream framework",
   "license": "MIT",
   "type": "module",
   "main": "./src/index.ts",
@@ -23,13 +23,14 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "test": "vitest run",
-    "lint": "biome check src/",
+    "lint": "biome check src/ tests/",
     "test:coverage": "vitest run --coverage",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.10",
     "@types/node": "^22.19.15",
+    "@vitest/coverage-v8": "^4.1.2",
     "typescript": "^6.0.2",
     "vitest": "^4.1.2"
   },
@@ -64,5 +65,12 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/C9up/comet.git"
+  },
+  "pnpm": {
+    "//": "Pin the coverage toolchain to the version used in dev. Without a committed lockfile the standalone CI resolves fresh, and v8 branch-counting differs enough between releases to cross a threshold on its own. Overrides only apply when this package is the install root (CI), so the monorepo workspace is unaffected.",
+    "overrides": {
+      "@vitest/coverage-v8": "4.1.11",
+      "vitest": "4.1.11"
+    }
   }
 }

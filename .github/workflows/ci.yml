@@ -34,9 +34,15 @@ jobs:
           node-version: '22'
       - run: pnpm install
       - run: pnpm exec tsc -p tsconfig.build.json --noEmit
+      # The build project excludes `tests`, so a type error in a test file
+      # reached nothing that runs here. `typecheck` is the project that
+      # includes them.
+      - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm build
-      - run: pnpm test
+      # With coverage, because the thresholds in vitest.config.ts are only a
+      # gate if something runs them.
+      - run: pnpm test:coverage
 
   # Publish job — gated on workflow_dispatch (manual maintainer trigger).
   # Requires NPM_TOKEN secret + a v<MAJOR>.<MINOR>.<PATCH> tag at HEAD matching
