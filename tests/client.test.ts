@@ -13,7 +13,6 @@ function defined<T>(value: T | null | undefined): T {
 	return value;
 }
 
-
 /** Cast-free readers over the envelope the client sent (typed `unknown`). */
 function reqId(body: unknown): number {
 	return isObject(body) && typeof body.id === "number" ? body.id : -1;
