@@ -7,6 +7,13 @@ import {
 	RpcError,
 } from "../src/index.js";
 
+/** Narrow away null/undefined without a `!` assertion (which lies to the compiler). */
+function defined<T>(value: T | null | undefined): T {
+	if (value == null) throw new Error("expected a defined value");
+	return value;
+}
+
+
 /** Cast-free readers over the envelope the client sent (typed `unknown`). */
 function reqId(body: unknown): number {
 	return isObject(body) && typeof body.id === "number" ? body.id : -1;
@@ -27,7 +34,7 @@ describe("comet/client > createRpcClient", () => {
 		const out = await rpc.call<{ valid: boolean }>("task.validate", { id: 7 });
 		expect(out).toEqual({ valid: true });
 
-		const [url, sent] = transport.mock.calls[0];
+		const [url, sent] = defined(transport.mock.calls[0]);
 		expect(url).toBe("/rpc");
 		expect(sent).toMatchObject({
 			jsonrpc: "2.0",
@@ -84,7 +91,7 @@ describe("comet/client > createRpcClient", () => {
 			},
 		];
 		const rpc = createRpcClient({ transport });
-		const [item] = await rpc.batch([{ method: "m" }]);
+		const item = defined((await rpc.batch([{ method: "m" }]))[0]);
 		expect(item.ok).toBe(false);
 		expect(item.ok === false && item.error.message).toMatch(
 			/carries both result and error/,
@@ -149,7 +156,7 @@ describe("comet/client > createRpcClient", () => {
 		const ac = new AbortController();
 
 		await rpc.call("ping", undefined, { signal: ac.signal });
-		const [url, , opts] = transport.mock.calls[0];
+		const [url, , opts] = defined(transport.mock.calls[0]);
 		expect(url).toBe("/api/rpc");
 		expect(opts.signal).toBe(ac.signal);
 	});
@@ -177,10 +184,11 @@ describe("comet/client > createRpcClient", () => {
 			{ method: "boom" },
 			{ method: "b" },
 		]);
-		expect(results[0]).toEqual({ ok: true, value: "a-ok" });
-		expect(results[1].ok).toBe(false);
-		if (!results[1].ok) expect(results[1].error.message).toBe("boom");
-		expect(results[2]).toEqual({ ok: true, value: "b-ok" });
+		expect(defined(results[0])).toEqual({ ok: true, value: "a-ok" });
+		const second = defined(results[1]);
+		expect(second.ok).toBe(false);
+		if (!second.ok) expect(second.error.message).toBe("boom");
+		expect(defined(results[2])).toEqual({ ok: true, value: "b-ok" });
 	});
 
 	it("batch() short-circuits to [] with no calls (no transport hit)", async () => {
@@ -205,7 +213,7 @@ describe("comet > batch() checks the envelope call() checks", () => {
 
 		// This came back as `{ ok: true, value: undefined }` — the single-call
 		// path refuses the same envelope.
-		const [result] = await rpc.batch([{ method: "a" }]);
+		const result = defined((await rpc.batch([{ method: "a" }]))[0]);
 		expect(result.ok).toBe(false);
 		if (!result.ok) expect(result.error.message).toMatch(/jsonrpc version/);
 	});
@@ -215,7 +223,7 @@ describe("comet > batch() checks the envelope call() checks", () => {
 			transport: answering([{ jsonrpc: "2.0", id: 0 }]),
 		});
 
-		const [result] = await rpc.batch([{ method: "a" }]);
+		const result = defined((await rpc.batch([{ method: "a" }]))[0]);
 		expect(result.ok).toBe(false);
 		if (!result.ok)
 			expect(result.error.message).toMatch(/neither result nor error/);
@@ -230,7 +238,7 @@ describe("comet > batch() checks the envelope call() checks", () => {
 		});
 
 		// Keeping the last silently let a response answer a call it was not for.
-		const [result] = await rpc.batch([{ method: "a" }]);
+		const result = defined((await rpc.batch([{ method: "a" }]))[0]);
 		expect(result.ok).toBe(false);
 		if (!result.ok) expect(result.error.message).toMatch(/more than one/i);
 	});
