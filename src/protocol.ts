@@ -71,9 +71,28 @@ export function isRpcError(value: unknown): value is RpcError {
 	return value instanceof RpcError;
 }
 
-/** Narrow an unknown to a plain object (non-null). */
+/**
+ * Narrow an unknown to a JSON-RPC Object — non-null, and not an Array.
+ *
+ * Every envelope the spec defines is an Object; the one Array it has is the
+ * batch, which a binding frames before anything here sees it. Answering "yes"
+ * to an Array let a batch walk into the single-request path, where it was
+ * turned away for a missing `jsonrpc` rather than for being the wrong kind of
+ * thing.
+ */
 export function isObject(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * A JSON-RPC error code. Spec §5.1 on `code`: "A Number that indicates the
+ * error type that occurred. This MUST be an integer." A fractional code — or a
+ * `NaN`, which is what an arithmetic slip in a handler produces — is not one,
+ * and `NaN` does not survive `JSON.stringify`: it goes out as `null` and
+ * reaches the caller as an error whose code is missing.
+ */
+function isErrorCode(value: unknown): value is number {
+	return typeof value === "number" && Number.isInteger(value);
 }
 
 /**
@@ -83,7 +102,7 @@ export function isObject(value: unknown): value is Record<string, unknown> {
 export function toRpcError(error: unknown): RpcError {
 	if (
 		isObject(error) &&
-		typeof error.code === "number" &&
+		isErrorCode(error.code) &&
 		typeof error.message === "string"
 	) {
 		return new RpcError(error.code, error.message, error.data);
@@ -96,23 +115,44 @@ export function toRpcError(error: unknown): RpcError {
 }
 
 /**
- * A domain error shaped like a JSON-RPC error — it carries a numeric `code`. A
- * server binding can map such a throw to a JSON-RPC error response instead of
- * collapsing every throw to InternalError.
+ * Whether a thrown value is a JSON-RPC error a binding may answer the caller
+ * with, rather than an internal failure it has to keep to itself.
+ *
+ * {@link RpcError} always is: throwing one is a statement. A foreign object is
+ * only read as one when its `code` is a NEGATIVE integer — the space the spec
+ * gives errors (§5.1 reserves -32768..-32000 and the framework issues -32003,
+ * -32004 and the like), and the space a handler writing a domain code picks
+ * from.
+ *
+ * Accepting any number was accepting the numbers other things happen to carry.
+ * A `DOMException` has a legacy numeric `code` — 20 for `AbortError`, 23 for
+ * `TimeoutError` — so a handler whose outbound `fetch` timed out answered the
+ * caller with `{ code: 20, message: "This operation was aborted" }`, walking
+ * straight past the guard a binding puts there to keep internal messages off
+ * the wire in production. gRPC status codes (0..16) arrive the same way.
  */
 export function isRpcShapedError(
 	err: unknown,
 ): err is { code: number; message?: unknown; data?: unknown } {
-	return isObject(err) && typeof err.code === "number";
+	if (err instanceof RpcError) return true;
+	return isObject(err) && isErrorCode(err.code) && err.code < 0;
 }
 
-/** Build an outgoing request envelope. */
+/**
+ * Build an outgoing request envelope. An absent `params` is left out, the way
+ * {@link buildError} leaves out an absent `data`: a transport that does not go
+ * through `JSON.stringify` — a worker, an in-process bus — otherwise carries a
+ * `params` member holding `undefined`, which is not a Structured value and is
+ * refused by the parser at the other end.
+ */
 export function buildRequest(
 	method: string,
 	params: unknown,
 	id: JsonRpcId,
 ): JsonRpcRequest {
-	return { jsonrpc: "2.0", method, params, id };
+	return params === undefined
+		? { jsonrpc: "2.0", method, id }
+		: { jsonrpc: "2.0", method, params, id };
 }
 
 /** Build a success response envelope. */
@@ -144,7 +184,8 @@ export type ParsedRpcRequest =
 
 /**
  * Validate an incoming JSON-RPC envelope and extract `method`/`params`/`id`.
- * Returns an `InvalidRequest` error response when the version/method are wrong.
+ * Returns an `InvalidRequest` error response when the version, the method, the
+ * id or the shape of `params` is wrong.
  */
 export function parseRequest(request: unknown): ParsedRpcRequest {
 	if (!isObject(request)) {
@@ -180,7 +221,14 @@ export function parseRequest(request: unknown): ParsedRpcRequest {
 		rawId === null || typeof rawId === "string" || typeof rawId === "number"
 			? rawId
 			: null;
-	if (jsonrpc !== "2.0" || !method || !idValid) {
+	// §4.2: "If present, parameters for the rpc call MUST be provided as a
+	// Structured value. Either by-position through an Array or by-name through
+	// an Object." A string, a number or a `null` is none of those, and passing
+	// one on hands the method a `params` no handler was written to read — the
+	// envelope check saying yes to something the method can only say no to.
+	const paramsValid =
+		params === undefined || isObject(params) || Array.isArray(params);
+	if (jsonrpc !== "2.0" || !method || !idValid || !paramsValid) {
 		return {
 			ok: false,
 			response: buildError(RpcErrorCode.InvalidRequest, "Invalid Request", id),

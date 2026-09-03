@@ -84,6 +84,18 @@ export function createRpcClient(options: RpcClientOptions): RpcClient {
 	const { transport } = options;
 	const url = options.url ?? "/rpc";
 	let nextId = 0;
+	/**
+	 * The next request id — one counter for single calls and batches alike.
+	 *
+	 * A batch used to number its entries from zero, so every batch sent the ids
+	 * `0, 1, 2` again and a call sent `1` at the same time. Over HTTP the
+	 * transport pairs each response with its own request and nothing shows; over
+	 * a transport that multiplexes — one WebSocket carrying several requests,
+	 * which is the reason the transport is injected at all — the correlation is
+	 * the id, and two live requests carrying the same one is a response
+	 * delivered to the wrong caller.
+	 */
+	const allocateId = (): number => ++nextId;
 
 	return {
 		async call<T>(
@@ -91,7 +103,7 @@ export function createRpcClient(options: RpcClientOptions): RpcClient {
 			params?: unknown,
 			callOptions?: RpcCallOptions<T>,
 		): Promise<T> {
-			const id = ++nextId;
+			const id = allocateId();
 			const res = await transport(url, buildRequest(method, params, id), {
 				signal: callOptions?.signal,
 			});
@@ -138,13 +150,16 @@ export function createRpcClient(options: RpcClientOptions): RpcClient {
 			batchOptions?: { signal?: AbortSignal },
 		): Promise<RpcResult[]> {
 			if (calls.length === 0) return [];
-			const requests = calls.map((c, index) =>
-				// index = request position; responses are matched back by id
-				buildRequest(c.method, c.params, index),
+			// Each call keeps the id it was sent under; responses are matched
+			// back by it, in whatever order the server returns them.
+			const pending = calls.map((call) => ({ call, id: allocateId() }));
+			const res = await transport(
+				url,
+				pending.map((entry) =>
+					buildRequest(entry.call.method, entry.call.params, entry.id),
+				),
+				{ signal: batchOptions?.signal },
 			);
-			const res = await transport(url, requests, {
-				signal: batchOptions?.signal,
-			});
 			if (!Array.isArray(res)) {
 				throw new RpcError(
 					RpcErrorCode.InternalError,
@@ -164,15 +179,15 @@ export function createRpcClient(options: RpcClientOptions): RpcClient {
 				if (byId.has(item.id)) duplicated.add(item.id);
 				byId.set(item.id, item);
 			}
-			return calls.map((c, index) => {
+			return pending.map(({ call: c, id }) => {
 				const fail = (message: string): RpcResult => ({
 					ok: false,
 					error: new RpcError(RpcErrorCode.InternalError, message),
 				});
-				const envelope = byId.get(index);
+				const envelope = byId.get(id);
 				if (!envelope) return fail(`No response for "${c.method}"`);
-				if (duplicated.has(index)) {
-					return fail(`More than one response carried id ${index}`);
+				if (duplicated.has(id)) {
+					return fail(`More than one response carried id ${id}`);
 				}
 				if (envelope.jsonrpc !== "2.0") {
 					return fail(
@@ -196,8 +211,27 @@ export function createRpcClient(options: RpcClientOptions): RpcClient {
 						`JSON-RPC response for "${c.method}" has neither result nor error`,
 					);
 				}
-				const value = c.parse ? c.parse(envelope.result) : envelope.result;
-				return { ok: true, value };
+				if (!c.parse) return { ok: true, value: envelope.result };
+				try {
+					return { ok: true, value: c.parse(envelope.result) };
+				} catch (error) {
+					// A batch settles per call, and a result that fails ITS OWN
+					// validation is that entry's failure. Letting the throw out
+					// rejected the whole promise and took every other entry with
+					// it — the ones that had already succeeded included.
+					const reason = error instanceof Error ? error.message : String(error);
+					return {
+						ok: false,
+						error: new RpcError(
+							RpcErrorCode.InternalError,
+							`Result for "${c.method}" failed validation: ${reason}`,
+							// Built here rather than received, so `data` carries what
+							// the validator threw — a caller checking WHY it failed
+							// has nowhere else to read it.
+							error,
+						),
+					};
+				}
 			});
 		},
 	};

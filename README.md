@@ -41,3 +41,11 @@ const results = await rpc.batch([{ method: "a" }, { method: "b" }]); // settled 
 The `@c9up/comet/protocol` surface exposes the spec primitives a server binding
 needs: `parseRequest`, `isNotification`, `buildRequest`/`buildSuccess`/`buildError`,
 `RpcError`/`toRpcError`/`isRpcShapedError`, and the reserved `RpcErrorCode`.
+
+`parseRequest` enforces the envelope MUSTs — the version, the method, an `id`
+that is a String/Number/Null, and a `params` that is a Structured value (§4.2:
+an Array or an Object, never a scalar). A handler raises a domain error by
+throwing `RpcError`; `isRpcShapedError` also accepts a plain object whose `code`
+is a **negative integer**, the space the spec gives errors, so the numeric
+`code` an aborted `fetch` or a gRPC status happens to carry is not mistaken for
+one.

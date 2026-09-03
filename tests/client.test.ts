@@ -81,10 +81,10 @@ describe("comet/client > createRpcClient", () => {
 	});
 
 	it("rejects a batch item carrying BOTH result and error", async () => {
-		const transport: RpcTransport = async () => [
+		const transport: RpcTransport = async (_url, body) => [
 			{
 				jsonrpc: "2.0",
-				id: 0,
+				id: reqId(Array.isArray(body) ? body[0] : body),
 				result: 1,
 				error: { code: -32000, message: "also this" },
 			},
@@ -199,15 +199,20 @@ describe("comet/client > createRpcClient", () => {
 });
 
 describe("comet > batch() checks the envelope call() checks", () => {
-	/** A transport answering with whatever the test hands it. */
+	/**
+	 * A transport answering with whatever the test builds from the ids the
+	 * client actually sent. Writing an id in by hand would pin the test to the
+	 * client's numbering; what it has to check is that a response reaches the
+	 * call whose id it carries.
+	 */
 	const answering =
-		(responses: unknown[]): RpcTransport =>
-		async () =>
-			responses;
+		(build: (ids: number[]) => unknown[]): RpcTransport =>
+		async (_url, body) =>
+			build(Array.isArray(body) ? body.map(reqId) : []);
 
 	it("refuses a response that is not JSON-RPC 2.0", async () => {
 		const rpc = createRpcClient({
-			transport: answering([{ jsonrpc: "1.0", id: 0 }]),
+			transport: answering((ids) => [{ jsonrpc: "1.0", id: defined(ids[0]) }]),
 		});
 
 		// This came back as `{ ok: true, value: undefined }` — the single-call
@@ -219,7 +224,7 @@ describe("comet > batch() checks the envelope call() checks", () => {
 
 	it("refuses a success carrying neither result nor error", async () => {
 		const rpc = createRpcClient({
-			transport: answering([{ jsonrpc: "2.0", id: 0 }]),
+			transport: answering((ids) => [{ jsonrpc: "2.0", id: defined(ids[0]) }]),
 		});
 
 		const result = defined((await rpc.batch([{ method: "a" }]))[0]);
@@ -230,9 +235,9 @@ describe("comet > batch() checks the envelope call() checks", () => {
 
 	it("refuses two responses claiming the same id", async () => {
 		const rpc = createRpcClient({
-			transport: answering([
-				{ jsonrpc: "2.0", result: "first", id: 0 },
-				{ jsonrpc: "2.0", result: "second", id: 0 },
+			transport: answering((ids) => [
+				{ jsonrpc: "2.0", result: "first", id: defined(ids[0]) },
+				{ jsonrpc: "2.0", result: "second", id: defined(ids[0]) },
 			]),
 		});
 
@@ -244,7 +249,9 @@ describe("comet > batch() checks the envelope call() checks", () => {
 
 	it("still accepts a null result, which is a valid value", async () => {
 		const rpc = createRpcClient({
-			transport: answering([{ jsonrpc: "2.0", result: null, id: 0 }]),
+			transport: answering((ids) => [
+				{ jsonrpc: "2.0", result: null, id: defined(ids[0]) },
+			]),
 		});
 
 		expect(await rpc.batch([{ method: "a" }])).toEqual([
