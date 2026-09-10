@@ -1,7 +1,7 @@
 {
   "name": "@c9up/comet",
   "version": "0.1.3",
-  "description": "Comet \u2014 agnostic JSON-RPC 2.0 protocol + isomorphic, transport-injectable client for the Ream framework",
+  "description": "Comet — agnostic JSON-RPC 2.0 protocol + isomorphic, transport-injectable client for the Ream framework",
   "license": "MIT",
   "type": "module",
   "main": "./src/index.ts",
@@ -28,11 +28,11 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.4.10",
-    "@types/node": "^22.19.15",
-    "@vitest/coverage-v8": "^4.1.2",
-    "typescript": "^6.0.2",
-    "vitest": "^4.1.2"
+    "@biomejs/biome": "^2.5.12",
+    "@types/node": "^22.20.1",
+    "@vitest/coverage-v8": "4.1.11",
+    "typescript": "^6.0.3",
+    "vitest": "4.1.11"
   },
   "engines": {
     "node": ">=22.0.0"
