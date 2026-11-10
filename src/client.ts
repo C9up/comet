@@ -13,10 +13,17 @@
 import {
 	buildRequest,
 	isObject,
-	RpcError,
+	type RpcError,
 	RpcErrorCode,
+	RpcRemoteError,
 	toRpcError,
 } from "./protocol.js";
+
+/** The server's `error` member, as an error raised for this call. */
+function received(error: unknown): RpcRemoteError {
+	const { code, message, data } = toRpcError(error);
+	return new RpcRemoteError(code, message, data);
+}
 
 /**
  * Sends a JSON body to `url` and resolves the parsed JSON response. Injected via
@@ -60,7 +67,7 @@ export type RpcResult<T = unknown> =
 
 export interface RpcClient {
 	/**
-	 * Call one method. Returns the result, or throws {@link RpcError} on a
+	 * Call one method. Returns the result, or throws {@link RpcRemoteError} on a
 	 * JSON-RPC error. The `jsonrpc`/`id` envelope is handled internally. Pass
 	 * `options.parse` to validate the result at runtime (skips the unchecked `T`
 	 * assertion) and `options.signal` to make the call abortable.
@@ -112,7 +119,7 @@ export function createRpcClient(options: RpcClientOptions): RpcClient {
 			// forged response could satisfy the wrong call. Reject before trusting
 			// `result`.
 			if (!isObject(res) || res.jsonrpc !== "2.0" || res.id !== id) {
-				throw new RpcError(
+				throw new RpcRemoteError(
 					RpcErrorCode.InternalError,
 					`Malformed or mismatched JSON-RPC response for "${method}" (bad jsonrpc/id envelope)`,
 				);
@@ -124,16 +131,16 @@ export function createRpcClient(options: RpcClientOptions): RpcClient {
 			// meant. Refused, the way a bad jsonrpc/id envelope already is.
 			const hasResult = "result" in res;
 			if (hasResult && res.error !== undefined) {
-				throw new RpcError(
+				throw new RpcRemoteError(
 					RpcErrorCode.InternalError,
 					`Malformed JSON-RPC response for "${method}" (carries both result and error)`,
 				);
 			}
-			if (res.error !== undefined) throw toRpcError(res.error);
+			if (res.error !== undefined) throw received(res.error);
 			// A conformant success response carries `result` (any JSON value,
 			// including null) and no error — neither key present is malformed.
 			if (!hasResult) {
-				throw new RpcError(
+				throw new RpcRemoteError(
 					RpcErrorCode.InternalError,
 					`JSON-RPC response for "${method}" has neither result nor error`,
 				);
@@ -161,7 +168,7 @@ export function createRpcClient(options: RpcClientOptions): RpcClient {
 				{ signal: batchOptions?.signal },
 			);
 			if (!Array.isArray(res)) {
-				throw new RpcError(
+				throw new RpcRemoteError(
 					RpcErrorCode.InternalError,
 					"Malformed JSON-RPC batch response",
 				);
@@ -182,7 +189,7 @@ export function createRpcClient(options: RpcClientOptions): RpcClient {
 			return pending.map(({ call: c, id }) => {
 				const fail = (message: string): RpcResult => ({
 					ok: false,
-					error: new RpcError(RpcErrorCode.InternalError, message),
+					error: new RpcRemoteError(RpcErrorCode.InternalError, message),
 				});
 				const envelope = byId.get(id);
 				if (!envelope) return fail(`No response for "${c.method}"`);
@@ -202,7 +209,7 @@ export function createRpcClient(options: RpcClientOptions): RpcClient {
 					);
 				}
 				if (envelope.error !== undefined) {
-					return { ok: false, error: toRpcError(envelope.error) };
+					return { ok: false, error: received(envelope.error) };
 				}
 				// A conformant success carries `result` — any JSON value, null
 				// included — so its absence is malformed, not an undefined value.
@@ -222,13 +229,13 @@ export function createRpcClient(options: RpcClientOptions): RpcClient {
 					const reason = error instanceof Error ? error.message : String(error);
 					return {
 						ok: false,
-						error: new RpcError(
+						error: new RpcRemoteError(
 							RpcErrorCode.InternalError,
 							`Result for "${c.method}" failed validation: ${reason}`,
-							// Built here rather than received, so `data` carries what
-							// the validator threw — a caller checking WHY it failed
-							// has nowhere else to read it.
-							error,
+							// The cause, not `data`: `data` is what a binding writes
+							// on the wire, and a stack has no place there.
+							undefined,
+							{ cause: error },
 						),
 					};
 				}

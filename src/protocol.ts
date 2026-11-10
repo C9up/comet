@@ -58,11 +58,39 @@ export const RpcErrorCode = {
 export class RpcError extends Error {
 	readonly code: number;
 	readonly data?: unknown;
-	constructor(code: number, message: string, data?: unknown) {
-		super(message);
+	constructor(
+		code: number,
+		message: string,
+		data?: unknown,
+		options?: ErrorOptions,
+	) {
+		super(message, options);
 		this.name = "RpcError";
 		this.code = code;
 		this.data = data;
+	}
+}
+
+/**
+ * An {@link RpcError} the client raised for a call: the error the remote
+ * server answered with, or a response the client could not accept.
+ *
+ * It is an `RpcError` for whoever made the call (`code`, `message`, `data`
+ * read the same), but it is not a statement by the code that awaited it, so
+ * {@link isRpcShapedError} does not recognise it: a server handler that calls
+ * another JSON-RPC service and lets the failure through has its caller told
+ * "Internal error", not the other service's message, data and method name.
+ * Forwarding one on purpose is `throw new RpcError(e.code, e.message)`.
+ */
+export class RpcRemoteError extends RpcError {
+	constructor(
+		code: number,
+		message: string,
+		data?: unknown,
+		options?: ErrorOptions,
+	) {
+		super(code, message, data, options);
+		this.name = "RpcRemoteError";
 	}
 }
 
@@ -118,7 +146,9 @@ export function toRpcError(error: unknown): RpcError {
  * Whether a thrown value is a JSON-RPC error a binding may answer the caller
  * with, rather than an internal failure it has to keep to itself.
  *
- * {@link RpcError} always is: throwing one is a statement. A foreign object is
+ * {@link RpcError} is: throwing one is a statement. An {@link RpcRemoteError}
+ * is not: the client raised it for a call to another server, so relaying it
+ * would hand that server's internals to this one's caller. A foreign object is
  * only read as one when its `code` is a NEGATIVE integer — the space the spec
  * gives errors (§5.1 reserves -32768..-32000 and the framework issues -32003,
  * -32004 and the like), and the space a handler writing a domain code picks
@@ -134,6 +164,7 @@ export function toRpcError(error: unknown): RpcError {
 export function isRpcShapedError(
 	err: unknown,
 ): err is { code: number; message?: unknown; data?: unknown } {
+	if (err instanceof RpcRemoteError) return false;
 	if (err instanceof RpcError) return true;
 	return isObject(err) && isErrorCode(err.code) && err.code < 0;
 }

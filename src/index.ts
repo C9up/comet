@@ -30,5 +30,6 @@ export {
 	parseRequest,
 	RpcError,
 	RpcErrorCode,
+	RpcRemoteError,
 	toRpcError,
 } from "./protocol.js";

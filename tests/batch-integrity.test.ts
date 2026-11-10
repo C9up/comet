@@ -99,9 +99,9 @@ describe("comet > a result that fails its own validation", () => {
 		expect(failed?.ok).toBe(false);
 		if (failed?.ok === false) {
 			expect(failed.error.message).toMatch(/"b" failed validation: not a User/);
-			// What the validator threw is reachable — a caller asking WHY the
-			// shape was refused has nowhere else to read it.
-			expect(failed.error.data).toBeInstanceOf(Error);
+			// What the validator threw is reachable, as the cause — a caller
+			// asking WHY the shape was refused has nowhere else to read it.
+			expect(failed.error.cause).toBeInstanceOf(Error);
 		}
 	});
 

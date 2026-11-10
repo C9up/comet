@@ -49,3 +49,10 @@ throwing `RpcError`; `isRpcShapedError` also accepts a plain object whose `code`
 is a **negative integer**, the space the spec gives errors, so the numeric
 `code` an aborted `fetch` or a gRPC status happens to carry is not mistaken for
 one.
+
+Every error the client raises is an `RpcRemoteError` (a subclass of
+`RpcError`): the error a server answered with, or a response the client could
+not accept. `isRpcShapedError` does not recognise it, so a server handler that
+calls another JSON-RPC service and lets the failure through answers its own
+caller "Internal error" in production, not the other service's message and
+data. To forward one on purpose, throw `new RpcError(e.code, e.message)`.
