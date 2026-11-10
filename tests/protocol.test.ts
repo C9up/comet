@@ -5,6 +5,7 @@ import {
 	buildSuccess,
 	isNotification,
 	isObject,
+	isReservedMethodName,
 	isRpcError,
 	isRpcShapedError,
 	parseRequest,
@@ -128,6 +129,18 @@ describe("comet/protocol > isNotification", () => {
 		expect(notification.ok && notification.notification).toBe(true);
 		const request = parseRequest({ jsonrpc: "2.0", method: "ping", id: null });
 		expect(request.ok && request.notification).toBe(false);
+	});
+});
+
+describe("comet/protocol > isReservedMethodName", () => {
+	it("reserves names that start with rpc. and nothing else", () => {
+		expect(isReservedMethodName("rpc.discover")).toBe(true);
+		expect(isReservedMethodName("rpc.")).toBe(true);
+		// Case-sensitive like jayson's /^rpc\./, and the period is required.
+		expect(isReservedMethodName("RPC.discover")).toBe(false);
+		expect(isReservedMethodName("rpcdiscover")).toBe(false);
+		expect(isReservedMethodName("user.rpc.find")).toBe(false);
+		expect(isReservedMethodName("")).toBe(false);
 	});
 });
 

@@ -18,6 +18,7 @@ export {
 	buildSuccess,
 	isNotification,
 	isObject,
+	isReservedMethodName,
 	isRpcError,
 	isRpcShapedError,
 	type JsonRpcErrorObject,

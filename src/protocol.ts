@@ -208,6 +208,17 @@ export function buildError(
 	};
 }
 
+/**
+ * Whether a method name is one §4 reserves: "Method names that begin with the
+ * word rpc followed by a period character (U+002E or ASCII 46) are reserved
+ * for rpc-internal methods and extensions and MUST NOT be used for anything
+ * else." Case-sensitive, as jayson's `/^rpc\./` (server/index.js) is: `RPC.x`
+ * is an ordinary name. A server binding refuses to register such a method.
+ */
+export function isReservedMethodName(name: string): boolean {
+	return name.startsWith("rpc.");
+}
+
 /** Result of {@link parseRequest}. */
 export type ParsedRpcRequest =
 	| {

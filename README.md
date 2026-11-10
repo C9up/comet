@@ -39,7 +39,8 @@ const results = await rpc.batch([{ method: "a" }, { method: "b" }]); // settled 
 ## Protocol
 
 The `@c9up/comet/protocol` surface exposes the spec primitives a server binding
-needs: `parseRequest`, `isNotification`, `buildRequest`/`buildSuccess`/`buildError`,
+needs: `parseRequest`, `isNotification`, `isReservedMethodName` (the `rpc.`
+prefix §4 reserves), `buildRequest`/`buildSuccess`/`buildError`,
 `RpcError`/`toRpcError`/`isRpcShapedError`, and the reserved `RpcErrorCode`.
 
 `parseRequest` enforces the envelope MUSTs — the version, the method, an `id`
