@@ -26,8 +26,8 @@ const rpc = createRpcClient({
     }).then((r) => (r.status === 204 ? null : r.json())),
 });
 
-const out = await rpc.call("task.validate", { id: 7 });          // typed via call<T>()
-await rpc.call("user.find", { id }, { parse: isUser });          // runtime-validated
+const out = await rpc.call("task.validate", { id: 7 });          // unknown: narrow it
+const user = await rpc.call("user.find", { id }, { parse: toUser }); // typed by parse
 await rpc.call("slow.op", p, { signal: ac.signal });             // abortable
 const results = await rpc.batch([{ method: "a" }, { method: "b" }]); // settled per call
 await rpc.notify("audit.log", { event: "login" });              // no id, no answer

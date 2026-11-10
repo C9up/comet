@@ -9,6 +9,7 @@ export {
 	type RpcCallOptions,
 	type RpcClient,
 	type RpcClientOptions,
+	type RpcParsedCallOptions,
 	type RpcResult,
 	type RpcTransport,
 } from "./client.js";

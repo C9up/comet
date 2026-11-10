@@ -30,7 +30,7 @@ describe("comet/client > createRpcClient", () => {
 		}));
 		const rpc = createRpcClient({ transport });
 
-		const out = await rpc.call<{ valid: boolean }>("task.validate", { id: 7 });
+		const out = await rpc.call("task.validate", { id: 7 });
 		expect(out).toEqual({ valid: true });
 
 		const [url, sent] = defined(transport.mock.calls[0]);

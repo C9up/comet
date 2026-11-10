@@ -75,8 +75,8 @@ export interface RpcClientOptions {
 /** Per-call options for {@link RpcClient.call}. */
 export interface RpcCallOptions<T = unknown> {
 	/**
-	 * Validate the result at runtime, returning the typed value — skips the
-	 * unchecked `T` assertion (the cast-free escape hatch).
+	 * Validate the result at runtime, returning the typed value: the only way
+	 * a result is typed (without it, `call` resolves `unknown`).
 	 */
 	parse?: (data: unknown) => T;
 	/** Abort signal — abort it to cancel the request (e.g. on unmount / new keystroke). */
@@ -100,18 +100,31 @@ export type RpcResult<T = unknown> =
 	| { ok: true; value: T }
 	| { ok: false; error: RpcError };
 
+/** {@link RpcCallOptions} with the validator that types the result. */
+export type RpcParsedCallOptions<T> = RpcCallOptions<T> & {
+	parse: (data: unknown) => T;
+};
+
 export interface RpcClient {
 	/**
 	 * Call one method. Returns the result, or throws {@link RpcRemoteError} on a
-	 * JSON-RPC error. The `jsonrpc`/`id` envelope is handled internally. Pass
-	 * `options.parse` to validate the result at runtime (skips the unchecked `T`
-	 * assertion) and `options.signal` to make the call abortable.
+	 * JSON-RPC error. The `jsonrpc`/`id` envelope is handled internally.
+	 * `options.signal` makes the call abortable.
+	 *
+	 * The result is typed by `options.parse`, which validates it at runtime;
+	 * without one it is `unknown`, for the caller to narrow. A type argument
+	 * alone would assert what nothing checked.
 	 */
-	call<T = unknown>(
+	call<T>(
+		method: string,
+		params: unknown,
+		options: RpcParsedCallOptions<T>,
+	): Promise<T>;
+	call(
 		method: string,
 		params?: unknown,
-		options?: RpcCallOptions<T>,
-	): Promise<T>;
+		options?: RpcCallOptions,
+	): Promise<unknown>;
 	/**
 	 * Send a notification (§4.1): no id, and the server MUST NOT answer it.
 	 * Resolves once the transport settles, whatever it resolved with (a 204
@@ -150,55 +163,63 @@ export function createRpcClient(options: RpcClientOptions): RpcClient {
 	 */
 	const allocateId = (): number => ++nextId;
 
+	function call<T>(
+		method: string,
+		params: unknown,
+		options: RpcParsedCallOptions<T>,
+	): Promise<T>;
+	function call(
+		method: string,
+		params?: unknown,
+		options?: RpcCallOptions,
+	): Promise<unknown>;
+	async function call<T>(
+		method: string,
+		params?: unknown,
+		callOptions?: RpcCallOptions<T>,
+	): Promise<unknown> {
+		const id = allocateId();
+		const res = await transport(url, buildRequest(method, params, id), {
+			signal: callOptions?.signal,
+		});
+		// Envelope conformance (JSON-RPC 2.0 §5): the version must match and the
+		// id MUST echo the one we sent — otherwise a stale, mis-routed, or
+		// forged response could satisfy the wrong call. Reject before trusting
+		// `result`. An id-null error is the exception: the transport handed
+		// this call this one reply, so it is the server's answer to it.
+		if (idNullError(res)) throw received(res.error);
+		if (!isObject(res) || res.jsonrpc !== "2.0" || res.id !== id) {
+			throw new RpcRemoteError(
+				RpcErrorCode.InternalError,
+				`Malformed or mismatched JSON-RPC response for "${method}" (bad jsonrpc/id envelope)`,
+			);
+		}
+		// §5: `result` and `error` are mutually exclusive — "Either the
+		// result member or error member MUST be included, but both members
+		// MUST NOT be included." A response carrying both is malformed, and
+		// reading the error out of it is guessing at which half the sender
+		// meant. Refused, the way a bad jsonrpc/id envelope already is.
+		const hasResult = "result" in res;
+		if (hasResult && res.error !== undefined) {
+			throw new RpcRemoteError(
+				RpcErrorCode.InternalError,
+				`Malformed JSON-RPC response for "${method}" (carries both result and error)`,
+			);
+		}
+		if (res.error !== undefined) throw received(res.error);
+		// A conformant success response carries `result` (any JSON value,
+		// including null) and no error — neither key present is malformed.
+		if (!hasResult) {
+			throw new RpcRemoteError(
+				RpcErrorCode.InternalError,
+				`JSON-RPC response for "${method}" has neither result nor error`,
+			);
+		}
+		return callOptions?.parse ? callOptions.parse(res.result) : res.result;
+	}
+
 	return {
-		async call<T>(
-			method: string,
-			params?: unknown,
-			callOptions?: RpcCallOptions<T>,
-		): Promise<T> {
-			const id = allocateId();
-			const res = await transport(url, buildRequest(method, params, id), {
-				signal: callOptions?.signal,
-			});
-			// Envelope conformance (JSON-RPC 2.0 §5): the version must match and the
-			// id MUST echo the one we sent — otherwise a stale, mis-routed, or
-			// forged response could satisfy the wrong call. Reject before trusting
-			// `result`. An id-null error is the exception: the transport handed
-			// this call this one reply, so it is the server's answer to it.
-			if (idNullError(res)) throw received(res.error);
-			if (!isObject(res) || res.jsonrpc !== "2.0" || res.id !== id) {
-				throw new RpcRemoteError(
-					RpcErrorCode.InternalError,
-					`Malformed or mismatched JSON-RPC response for "${method}" (bad jsonrpc/id envelope)`,
-				);
-			}
-			// §5: `result` and `error` are mutually exclusive — "Either the
-			// result member or error member MUST be included, but both members
-			// MUST NOT be included." A response carrying both is malformed, and
-			// reading the error out of it is guessing at which half the sender
-			// meant. Refused, the way a bad jsonrpc/id envelope already is.
-			const hasResult = "result" in res;
-			if (hasResult && res.error !== undefined) {
-				throw new RpcRemoteError(
-					RpcErrorCode.InternalError,
-					`Malformed JSON-RPC response for "${method}" (carries both result and error)`,
-				);
-			}
-			if (res.error !== undefined) throw received(res.error);
-			// A conformant success response carries `result` (any JSON value,
-			// including null) and no error — neither key present is malformed.
-			if (!hasResult) {
-				throw new RpcRemoteError(
-					RpcErrorCode.InternalError,
-					`JSON-RPC response for "${method}" has neither result nor error`,
-				);
-			}
-			// Result boundary — the same unchecked `T` assertion HTTP clients use,
-			// with `parse` as the cast-free, runtime-validated escape hatch.
-			return callOptions?.parse
-				? callOptions.parse(res.result)
-				: (res.result as T);
-		},
+		call,
 
 		async notify(
 			method: string,
