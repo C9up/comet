@@ -210,7 +210,14 @@ export function buildError(
 
 /** Result of {@link parseRequest}. */
 export type ParsedRpcRequest =
-	| { ok: true; method: string; params: unknown; id: JsonRpcId }
+	| {
+			ok: true;
+			method: string;
+			params: unknown;
+			id: JsonRpcId;
+			/** No `id` member: the server runs it and MUST NOT reply (§4.1). */
+			notification: boolean;
+	  }
 	| { ok: false; response: JsonRpcErrorResponse };
 
 /**
@@ -265,21 +272,21 @@ export function parseRequest(request: unknown): ParsedRpcRequest {
 			response: buildError(RpcErrorCode.InvalidRequest, "Invalid Request", id),
 		};
 	}
-	return { ok: true, method, params, id };
+	return { ok: true, method, params, id, notification: !idPresent };
 }
 
 /**
- * A JSON-RPC notification is a well-formed request with NO `id` member. The spec
+ * A JSON-RPC notification is a VALID request with NO `id` member. The spec
  * (§4.1) says the server MUST NOT reply to one — it still runs for side-effects.
- * A malformed object (no method / wrong version) is NOT a notification.
+ *
+ * Valid as {@link parseRequest} means it, so the two cannot disagree: an object
+ * it refuses (a scalar `params`, an empty method, a wrong version) is no
+ * Request object, and §5 answers it with -32600 and a null id. Read as a
+ * notification, it was dropped without that answer. The reference servers
+ * validate first too (jayson server/index.js: "from now on we are
+ * notification-aware" comes after INVALID_REQUEST).
  */
 export function isNotification(request: unknown): boolean {
-	return (
-		isObject(request) &&
-		"jsonrpc" in request &&
-		request.jsonrpc === "2.0" &&
-		"method" in request &&
-		typeof request.method === "string" &&
-		!("id" in request)
-	);
+	const parsed = parseRequest(request);
+	return parsed.ok && parsed.notification;
 }

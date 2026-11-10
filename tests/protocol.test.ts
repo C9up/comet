@@ -55,6 +55,7 @@ describe("comet/protocol > parseRequest", () => {
 			method: "user.find",
 			params: { id: 9 },
 			id: 4,
+			notification: false,
 		});
 	});
 
@@ -107,6 +108,26 @@ describe("comet/protocol > isNotification", () => {
 	it("is false for a malformed object", () => {
 		expect(isNotification({ method: "ping" })).toBe(false);
 		expect(isNotification(null)).toBe(false);
+	});
+	it("is false for any request parseRequest refuses, id or not", () => {
+		// §4.1: a Notification is a Request object without an id; an invalid
+		// object is no Request object, and §5 answers it with -32600 and a
+		// null id. Calling it a notification let a server drop that answer.
+		for (const request of [
+			{ jsonrpc: "2.0", method: "foo", params: "bar" },
+			{ jsonrpc: "2.0", method: "foo", params: 42 },
+			{ jsonrpc: "2.0", method: "foo", params: null },
+			{ jsonrpc: "2.0", method: "" },
+		]) {
+			expect(parseRequest(request).ok).toBe(false);
+			expect(isNotification(request)).toBe(false);
+		}
+	});
+	it("agrees with the flag parseRequest returns", () => {
+		const notification = parseRequest({ jsonrpc: "2.0", method: "ping" });
+		expect(notification.ok && notification.notification).toBe(true);
+		const request = parseRequest({ jsonrpc: "2.0", method: "ping", id: null });
+		expect(request.ok && request.notification).toBe(false);
 	});
 });
 

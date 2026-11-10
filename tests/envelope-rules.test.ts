@@ -40,15 +40,28 @@ describe("comet > params is a Structured value or it is not params", () => {
 	it("takes both structured forms and no params at all", () => {
 		expect(
 			parseRequest({ jsonrpc: "2.0", method: "m", params: [1, 2], id: 1 }),
-		).toEqual({ ok: true, method: "m", params: [1, 2], id: 1 });
+		).toEqual({
+			ok: true,
+			method: "m",
+			params: [1, 2],
+			id: 1,
+			notification: false,
+		});
 		expect(
 			parseRequest({ jsonrpc: "2.0", method: "m", params: { a: 1 }, id: 1 }),
-		).toEqual({ ok: true, method: "m", params: { a: 1 }, id: 1 });
+		).toEqual({
+			ok: true,
+			method: "m",
+			params: { a: 1 },
+			id: 1,
+			notification: false,
+		});
 		expect(parseRequest({ jsonrpc: "2.0", method: "m", id: 1 })).toEqual({
 			ok: true,
 			method: "m",
 			params: undefined,
 			id: 1,
+			notification: false,
 		});
 	});
 
