@@ -19,6 +19,13 @@ export interface JsonRpcRequest {
 	id: JsonRpcId;
 }
 
+/** An outgoing notification (§4.1): a request with no `id` member at all. */
+export interface JsonRpcNotification {
+	jsonrpc: "2.0";
+	method: string;
+	params?: unknown;
+}
+
 /** The `error` member of a JSON-RPC 2.0 error response. */
 export interface JsonRpcErrorObject {
 	code: number;
@@ -184,6 +191,20 @@ export function buildRequest(
 	return params === undefined
 		? { jsonrpc: "2.0", method, id }
 		: { jsonrpc: "2.0", method, params, id };
+}
+
+/**
+ * Build a notification envelope: no `id` member — not an `id: null`, which is
+ * a request the server answers (§4.1) — and no `params` when absent, as
+ * {@link buildRequest}.
+ */
+export function buildNotification(
+	method: string,
+	params: unknown,
+): JsonRpcNotification {
+	return params === undefined
+		? { jsonrpc: "2.0", method }
+		: { jsonrpc: "2.0", method, params };
 }
 
 /** Build a success response envelope. */

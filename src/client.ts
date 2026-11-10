@@ -6,11 +6,21 @@
  * adapter seam that lets the client live outside any UI or server framework.
  *
  *   const rpc = createRpcClient({ transport: (url, body, { signal }) =>
- *     fetch(url, { method: 'POST', body: JSON.stringify(body), signal })
- *       .then((r) => r.json()) })
+ *     fetch(url, {
+ *       method: 'POST',
+ *       headers: { 'content-type': 'application/json' },
+ *       body: JSON.stringify(body),
+ *       signal,
+ *     }).then((r) => (r.status === 204 ? null : r.json())) })
  *   const out = await rpc.call('task.validate', { id })
+ *   await rpc.notify('audit.log', { event: 'login' })
+ *
+ * The transport sends a JSON content type: a server is free to refuse any
+ * other (Ream's RpcRouter answers 415), and an empty reply — the 204 a server
+ * answers a notification with — resolves rather than failing to parse.
  */
 import {
+	buildNotification,
 	buildRequest,
 	isObject,
 	type RpcError,
@@ -44,8 +54,10 @@ function received(error: unknown): RpcRemoteError {
 }
 
 /**
- * Sends a JSON body to `url` and resolves the parsed JSON response. Injected via
- * {@link RpcClientOptions.transport}; the client never touches `fetch` directly.
+ * Sends a JSON body to `url` (as `application/json`) and resolves the parsed
+ * JSON response, or nothing for an empty one (a notification's 204). Injected
+ * via {@link RpcClientOptions.transport}; the client never touches `fetch`
+ * directly.
  */
 export type RpcTransport = (
 	url: string,
@@ -71,11 +83,16 @@ export interface RpcCallOptions<T = unknown> {
 	signal?: AbortSignal;
 }
 
-/** One call in a batch. `parse` optionally validates that call's result (cast-free). */
+/**
+ * One call in a batch. `parse` optionally validates that call's result
+ * (cast-free). `notify: true` sends it as a notification: no id, no answer
+ * awaited, and its entry in the result is `{ ok: true, value: undefined }`.
+ */
 export interface RpcCall<T = unknown> {
 	method: string;
 	params?: unknown;
 	parse?: (data: unknown) => T;
+	notify?: boolean;
 }
 
 /** A settled batch entry — the result, or the JSON-RPC error for that call. */
@@ -95,6 +112,17 @@ export interface RpcClient {
 		params?: unknown,
 		options?: RpcCallOptions<T>,
 	): Promise<T>;
+	/**
+	 * Send a notification (§4.1): no id, and the server MUST NOT answer it.
+	 * Resolves once the transport settles, whatever it resolved with (a 204
+	 * has no body), and rejects when the transport does, or when the server
+	 * refused the envelope with an id-null error.
+	 */
+	notify(
+		method: string,
+		params?: unknown,
+		options?: { signal?: AbortSignal },
+	): Promise<void>;
 	/**
 	 * Send a JSON-RPC batch. Returns one settled entry per call, in request
 	 * order. `options.signal` aborts the whole batch (it is one HTTP request).
@@ -172,24 +200,49 @@ export function createRpcClient(options: RpcClientOptions): RpcClient {
 				: (res.result as T);
 		},
 
+		async notify(
+			method: string,
+			params?: unknown,
+			notifyOptions?: { signal?: AbortSignal },
+		): Promise<void> {
+			const res = await transport(url, buildNotification(method, params), {
+				signal: notifyOptions?.signal,
+			});
+			if (idNullError(res)) throw received(res.error);
+		},
+
 		async batch(
 			calls: RpcCall[],
 			batchOptions?: { signal?: AbortSignal },
 		): Promise<RpcResult[]> {
 			if (calls.length === 0) return [];
 			// Each call keeps the id it was sent under; responses are matched
-			// back by it, in whatever order the server returns them.
-			const pending = calls.map((call) => ({ call, id: allocateId() }));
+			// back by it, in whatever order the server returns them. A
+			// notification has none, and nothing comes back for it.
+			const sent = calls.map((call) =>
+				call.notify === true
+					? { call, id: undefined }
+					: { call, id: allocateId() },
+			);
+			const pending = sent.flatMap(({ call, id }) =>
+				id === undefined ? [] : [{ call, id }],
+			);
 			const res = await transport(
 				url,
-				pending.map((entry) =>
-					buildRequest(entry.call.method, entry.call.params, entry.id),
+				sent.map(({ call, id }) =>
+					id === undefined
+						? buildNotification(call.method, call.params)
+						: buildRequest(call.method, call.params, id),
 				),
 				{ signal: batchOptions?.signal },
 			);
 			// A batch refused as a whole (empty, too large) is answered with one
 			// error object, not an array.
 			if (idNullError(res)) throw received(res.error);
+			const notified: RpcResult = { ok: true, value: undefined };
+			// All notifications: the server answers nothing (a 204), so there is
+			// no reply to read.
+			if (pending.length === 0) return sent.map(() => notified);
 			if (!Array.isArray(res)) {
 				throw new RpcRemoteError(
 					RpcErrorCode.InternalError,
@@ -228,7 +281,11 @@ export function createRpcClient(options: RpcClientOptions): RpcClient {
 			) {
 				byId.set(onlyUnanswered.id, onlyIdNull);
 			}
-			return pending.map(({ call: c, id }) => {
+			return sent.map(({ call: c, id }) =>
+				id === undefined ? notified : settle(c, id),
+			);
+
+			function settle(c: RpcCall, id: number): RpcResult {
 				const fail = (message: string): RpcResult => ({
 					ok: false,
 					error: new RpcRemoteError(RpcErrorCode.InternalError, message),
@@ -281,7 +338,7 @@ export function createRpcClient(options: RpcClientOptions): RpcClient {
 						),
 					};
 				}
-			});
+			}
 		},
 	};
 }

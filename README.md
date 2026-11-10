@@ -23,14 +23,21 @@ const rpc = createRpcClient({
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
       signal,
-    }).then((r) => r.json()),
+    }).then((r) => (r.status === 204 ? null : r.json())),
 });
 
 const out = await rpc.call("task.validate", { id: 7 });          // typed via call<T>()
 await rpc.call("user.find", { id }, { parse: isUser });          // runtime-validated
 await rpc.call("slow.op", p, { signal: ac.signal });             // abortable
 const results = await rpc.batch([{ method: "a" }, { method: "b" }]); // settled per call
+await rpc.notify("audit.log", { event: "login" });              // no id, no answer
+await rpc.batch([{ method: "a" }, { method: "log", notify: true }]); // mixed batch
 ```
+
+The transport sends `content-type: application/json` (a server may refuse any
+other type — Ream's `RpcRouter` answers 415) and resolves an empty reply: the
+204 a server answers a notification, or an all-notification batch, with. A
+notification's entry in a batch result is `{ ok: true, value: undefined }`.
 
 > In the browser, prefer `@c9up/aurora`'s `createRpcClient` — it wires aurora's
 > `HttpClient` (base URL, auth headers, timeouts) as the transport and pairs with
@@ -40,7 +47,7 @@ const results = await rpc.batch([{ method: "a" }, { method: "b" }]); // settled 
 
 The `@c9up/comet/protocol` surface exposes the spec primitives a server binding
 needs: `parseRequest`, `isNotification`, `isReservedMethodName` (the `rpc.`
-prefix §4 reserves), `buildRequest`/`buildSuccess`/`buildError`,
+prefix §4 reserves), `buildRequest`/`buildNotification`/`buildSuccess`/`buildError`,
 `RpcError`/`toRpcError`/`isRpcShapedError`, and the reserved `RpcErrorCode`.
 
 `parseRequest` enforces the envelope MUSTs — the version, the method, an `id`

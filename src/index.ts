@@ -14,6 +14,7 @@ export {
 } from "./client.js";
 export {
 	buildError,
+	buildNotification,
 	buildRequest,
 	buildSuccess,
 	isNotification,
@@ -24,6 +25,7 @@ export {
 	type JsonRpcErrorObject,
 	type JsonRpcErrorResponse,
 	type JsonRpcId,
+	type JsonRpcNotification,
 	type JsonRpcRequest,
 	type JsonRpcResponse,
 	type JsonRpcSuccessResponse,
