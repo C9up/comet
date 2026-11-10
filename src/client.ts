@@ -19,6 +19,24 @@ import {
 	toRpcError,
 } from "./protocol.js";
 
+/**
+ * An error response whose id is null: what a server answers when it could not
+ * read the id (§5, Parse error / Invalid Request), and the single object it
+ * answers a batch it refused as a whole with (§6). Only an error may carry a
+ * null id — a success with one answers nobody.
+ */
+function idNullError(
+	value: unknown,
+): value is { jsonrpc: "2.0"; error: unknown; id: null } {
+	return (
+		isObject(value) &&
+		value.jsonrpc === "2.0" &&
+		value.id === null &&
+		value.error !== undefined &&
+		!("result" in value)
+	);
+}
+
 /** The server's `error` member, as an error raised for this call. */
 function received(error: unknown): RpcRemoteError {
 	const { code, message, data } = toRpcError(error);
@@ -117,7 +135,9 @@ export function createRpcClient(options: RpcClientOptions): RpcClient {
 			// Envelope conformance (JSON-RPC 2.0 §5): the version must match and the
 			// id MUST echo the one we sent — otherwise a stale, mis-routed, or
 			// forged response could satisfy the wrong call. Reject before trusting
-			// `result`.
+			// `result`. An id-null error is the exception: the transport handed
+			// this call this one reply, so it is the server's answer to it.
+			if (idNullError(res)) throw received(res.error);
 			if (!isObject(res) || res.jsonrpc !== "2.0" || res.id !== id) {
 				throw new RpcRemoteError(
 					RpcErrorCode.InternalError,
@@ -167,6 +187,9 @@ export function createRpcClient(options: RpcClientOptions): RpcClient {
 				),
 				{ signal: batchOptions?.signal },
 			);
+			// A batch refused as a whole (empty, too large) is answered with one
+			// error object, not an array.
+			if (idNullError(res)) throw received(res.error);
 			if (!Array.isArray(res)) {
 				throw new RpcRemoteError(
 					RpcErrorCode.InternalError,
@@ -179,12 +202,31 @@ export function createRpcClient(options: RpcClientOptions): RpcClient {
 			// have refused it.
 			const byId = new Map<unknown, Record<string, unknown>>();
 			const duplicated = new Set<unknown>();
+			const idNull: Record<string, unknown>[] = [];
 			for (const item of res) {
 				if (!isObject(item)) continue;
+				if (idNullError(item)) {
+					idNull.push(item);
+					continue;
+				}
 				// A repeated id is a malformed batch, and silently keeping the last
 				// one lets a response answer a call it was not for.
 				if (byId.has(item.id)) duplicated.add(item.id);
 				byId.set(item.id, item);
+			}
+			// An entry the server could not read the id of is answered with a
+			// null id. It can be paired with its call only when exactly one call
+			// is left without a response; with several, any pairing is a guess.
+			const unanswered = pending.filter(({ id }) => !byId.has(id));
+			const [onlyUnanswered] = unanswered;
+			const [onlyIdNull] = idNull;
+			if (
+				unanswered.length === 1 &&
+				idNull.length === 1 &&
+				onlyUnanswered !== undefined &&
+				onlyIdNull !== undefined
+			) {
+				byId.set(onlyUnanswered.id, onlyIdNull);
 			}
 			return pending.map(({ call: c, id }) => {
 				const fail = (message: string): RpcResult => ({
