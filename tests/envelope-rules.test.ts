@@ -67,11 +67,26 @@ describe("comet > params is a Structured value or it is not params", () => {
 
 	it("accepts what buildRequest produces for a call with no params", () => {
 		// The two halves have to agree without JSON in between: a worker or an
-		// in-process bus hands the object over as it was built, and a `params`
-		// member holding `undefined` is not a Structured value.
+		// in-process bus hands the object over as it was built, so the builder
+		// leaves the member out rather than sending `params: undefined`.
 		const request = buildRequest("m", undefined, 1);
 		expect("params" in request).toBe(false);
 		expect(parseRequest(request).ok).toBe(true);
+	});
+
+	it("reads a params member holding undefined as no params", () => {
+		// What JSON.stringify would have dropped: the call runs as if the
+		// member were absent, never refused and never handed a non-structured
+		// value.
+		expect(
+			parseRequest({ jsonrpc: "2.0", method: "m", params: undefined, id: 1 }),
+		).toEqual({
+			ok: true,
+			method: "m",
+			params: undefined,
+			id: 1,
+			notification: false,
+		});
 	});
 });
 

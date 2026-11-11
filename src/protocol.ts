@@ -179,9 +179,11 @@ export function isRpcShapedError(
 /**
  * Build an outgoing request envelope. An absent `params` is left out, the way
  * {@link buildError} leaves out an absent `data`: a transport that does not go
- * through `JSON.stringify` — a worker, an in-process bus — otherwise carries a
- * `params` member holding `undefined`, which is not a Structured value and is
- * refused by the parser at the other end.
+ * through `JSON.stringify` — a worker, an in-process bus — would otherwise
+ * carry a `params` member holding `undefined`. {@link parseRequest} reads such
+ * a member as no params, but it is no Structured value (§4.2), so a stricter
+ * peer may refuse it; the envelope this builds is the same with or without
+ * JSON in between.
  */
 export function buildRequest(
 	method: string,
@@ -296,6 +298,8 @@ export function parseRequest(request: unknown): ParsedRpcRequest {
 	// an Object." A string, a number or a `null` is none of those, and passing
 	// one on hands the method a `params` no handler was written to read — the
 	// envelope check saying yes to something the method can only say no to.
+	// A member holding `undefined` is what JSON would have dropped: it is read
+	// as no params, like an absent member.
 	const paramsValid =
 		params === undefined || isObject(params) || Array.isArray(params);
 	if (jsonrpc !== "2.0" || !method || !idValid || !paramsValid) {
