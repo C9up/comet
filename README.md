@@ -43,6 +43,26 @@ notification's entry in a batch result is `{ ok: true, value: undefined }`.
 > `HttpClient` (base URL, auth headers, timeouts) as the transport and pairs with
 > `command()`.
 
+## Over a WebSocket
+
+```ts
+import { createRpcClient, createWebSocketTransport } from "@c9up/comet";
+
+const socket = createWebSocketTransport();
+const rpc = createRpcClient({ url: "wss://app.example/rpc", transport: socket });
+await rpc.call("task.validate", { id: 7 });
+socket.close();
+```
+
+One socket per endpoint URL, opened on the first call, on the platform
+`WebSocket` (browser, or Node 24+). The transport puts its own id on each
+request and gives the caller's back, so responses are matched to their callers
+however many clients share it. Every call has a timeout (30 s), a dropped socket
+fails what waits on it and the next call reconnects, a peer that breaks the
+protocol loses the socket, and messages are bounded both ways (1 MiB, 4 MiB of
+send buffer). Failures are `RpcTransportError`s with an `E_COMET_*` code;
+`createSocket` replaces the platform constructor (Node's `headers`, tests).
+
 ## Protocol
 
 The `@c9up/comet/protocol` surface exposes the spec primitives a server binding

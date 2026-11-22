@@ -37,3 +37,11 @@ export {
 	RpcRemoteError,
 	toRpcError,
 } from "./protocol.js";
+export {
+	createWebSocketTransport,
+	type RpcSocket,
+	RpcTransportError,
+	type RpcTransportErrorCode,
+	type RpcWebSocketTransport,
+	type WebSocketTransportOptions,
+} from "./websocket.js";
