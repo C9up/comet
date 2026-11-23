@@ -22,7 +22,7 @@
  *   carry the same id, whoever sent them.
  * - **Nothing waits forever.** Every call has a timeout (30 s unless set), and
  *   a socket that closes or fails rejects every call still waiting on it with
- *   a {@link RpcTransportError}. The next call opens a new socket, unless
+ *   a transport error (`errors.E_COMET_*`). The next call opens a new socket, unless
  *   `reconnect: false`.
  * - **A peer that breaks the protocol loses the socket.** A frame that is not
  *   text, not JSON, larger than `maxMessageBytes`, or that answers in a shape
@@ -46,7 +46,19 @@
  *   way to refuse a frame earlier.
  */
 
+import type { Exception } from "@c9up/flare";
 import type { RpcTransport } from "./client.js";
+import {
+	E_COMET_BACKPRESSURE,
+	E_COMET_CONNECTION_CLOSED,
+	E_COMET_CONNECTION_FAILED,
+	E_COMET_INVALID_MESSAGE,
+	E_COMET_INVALID_OPTION,
+	E_COMET_MESSAGE_TOO_LARGE,
+	E_COMET_PROTOCOL_ERROR,
+	E_COMET_TIMEOUT,
+	E_COMET_TRANSPORT_CLOSED,
+} from "./errors.js";
 import { isObject, type JsonRpcId } from "./protocol.js";
 
 /** Why a call over the socket failed without a JSON-RPC answer. */
@@ -67,25 +79,6 @@ export type RpcTransportErrorCode =
 	| "E_COMET_PROTOCOL_ERROR"
 	/** The client handed over something that is not a JSON-RPC message, or not JSON. */
 	| "E_COMET_INVALID_MESSAGE";
-
-/**
- * A failure of the transport itself, not an answer from the server. Its `code`
- * is a string, so `isRpcShapedError` never mistakes it for a JSON-RPC error
- * that a server handler could forward.
- */
-export class RpcTransportError extends Error {
-	readonly code: RpcTransportErrorCode;
-
-	constructor(
-		code: RpcTransportErrorCode,
-		message: string,
-		options?: { cause?: unknown },
-	) {
-		super(message, options);
-		this.name = "RpcTransportError";
-		this.code = code;
-	}
-}
 
 /**
  * What the transport needs of a socket — the standard `WebSocket` has it.
@@ -160,9 +153,7 @@ function positive(
 ): number {
 	if (value === undefined) return fallback;
 	if (typeof value !== "number" || Number.isNaN(value) || value <= 0) {
-		throw new RangeError(
-			`${name} must be a positive number, got ${String(value)}`,
-		);
+		throw new E_COMET_INVALID_OPTION([name, "a positive number", value]);
 	}
 	return value;
 }
@@ -261,14 +252,12 @@ class Connection {
 				const what = `${event.code}${event.reason ? ` ${event.reason}` : ""}`;
 				const error =
 					this.#state === "open"
-						? new RpcTransportError(
-								"E_COMET_CONNECTION_CLOSED",
+						? new E_COMET_CONNECTION_CLOSED([
 								`the socket closed (${what}) before the answer came`,
-							)
-						: new RpcTransportError(
-								"E_COMET_CONNECTION_FAILED",
+							])
+						: new E_COMET_CONNECTION_FAILED([
 								`the socket could not be opened (${what})`,
-							);
+							]);
 				reject(error);
 				this.#die(error);
 			});
@@ -309,7 +298,7 @@ class Connection {
 	}
 
 	/** Close the socket and fail every message waiting on it. */
-	shut(code: number, reason: string, error: RpcTransportError): void {
+	shut(code: number, reason: string, error: Exception): void {
 		this.#die(error);
 		try {
 			this.#socket.close(code, reason);
@@ -318,7 +307,7 @@ class Connection {
 		}
 	}
 
-	#die(error: RpcTransportError): void {
+	#die(error: Exception): void {
 		if (this.#state === "closed") return;
 		this.#state = "closed";
 		this.#onDead();
@@ -332,7 +321,7 @@ class Connection {
 		this.shut(
 			CLOSE_PROTOCOL,
 			"comet: malformed answer",
-			new RpcTransportError("E_COMET_PROTOCOL_ERROR", message),
+			new E_COMET_PROTOCOL_ERROR([message]),
 		);
 	}
 
@@ -351,10 +340,10 @@ class Connection {
 			this.shut(
 				CLOSE_TOO_LARGE,
 				"comet: message too large",
-				new RpcTransportError(
-					"E_COMET_MESSAGE_TOO_LARGE",
-					`the peer sent a message over ${this.#maxMessageBytes} bytes`,
-				),
+				new E_COMET_MESSAGE_TOO_LARGE([
+					"the peer sent a message",
+					this.#maxMessageBytes,
+				]),
 			);
 			return;
 		}
@@ -456,18 +445,16 @@ function prepare(
 	const ids = new Map<number, JsonRpcId>();
 	const relabel = (item: unknown): unknown => {
 		if (!isObject(item)) {
-			throw new RpcTransportError(
-				"E_COMET_INVALID_MESSAGE",
+			throw new E_COMET_INVALID_MESSAGE([
 				"a JSON-RPC message is an object, or an array of objects",
-			);
+			]);
 		}
 		if (!Object.hasOwn(item, "id")) return item;
 		const id = item.id;
 		if (id !== null && typeof id !== "string" && typeof id !== "number") {
-			throw new RpcTransportError(
-				"E_COMET_INVALID_MESSAGE",
+			throw new E_COMET_INVALID_MESSAGE([
 				"a request id is a string, a number or null",
-			);
+			]);
 		}
 		const wire = nextId();
 		ids.set(wire, id);
@@ -475,27 +462,20 @@ function prepare(
 	};
 	const batch = Array.isArray(body);
 	if (batch && body.length === 0) {
-		throw new RpcTransportError(
-			"E_COMET_INVALID_MESSAGE",
-			"a batch holds at least one call",
-		);
+		throw new E_COMET_INVALID_MESSAGE(["a batch holds at least one call"]);
 	}
 	const wire = batch ? body.map(relabel) : relabel(body);
 	let text: string;
 	try {
 		text = JSON.stringify(wire);
 	} catch (cause) {
-		throw new RpcTransportError(
-			"E_COMET_INVALID_MESSAGE",
-			"the message cannot be written as JSON",
+		throw new E_COMET_INVALID_MESSAGE(
+			["the message cannot be written as JSON"],
 			{ cause },
 		);
 	}
 	if (utf8Length(text) > maxBytes) {
-		throw new RpcTransportError(
-			"E_COMET_MESSAGE_TOO_LARGE",
-			`the message is over ${maxBytes} bytes`,
-		);
+		throw new E_COMET_MESSAGE_TOO_LARGE(["the message is", maxBytes]);
 	}
 	return { text, ids, batch };
 }
@@ -524,9 +504,11 @@ export function createWebSocketTransport(
 		DEFAULT_MAX_BUFFERED_BYTES,
 	);
 	if (timeout !== Number.POSITIVE_INFINITY && timeout > MAX_TIMER_MS) {
-		throw new RangeError(
-			`timeout must be at most ${MAX_TIMER_MS} ms, or Infinity`,
-		);
+		throw new E_COMET_INVALID_OPTION([
+			"timeout",
+			`at most ${MAX_TIMER_MS} ms, or Infinity`,
+			timeout,
+		]);
 	}
 	const reconnect = options.reconnect !== false;
 	const connections = new Map<string, Connection>();
@@ -539,18 +521,16 @@ export function createWebSocketTransport(
 		const existing = connections.get(url);
 		if (existing !== undefined && !existing.closed) return existing;
 		if (dead.has(url)) {
-			throw new RpcTransportError(
-				"E_COMET_CONNECTION_CLOSED",
+			throw new E_COMET_CONNECTION_CLOSED([
 				"the socket closed and reconnect is off",
-			);
+			]);
 		}
 		let socket: RpcSocket;
 		try {
 			socket = createSocket(url);
 		} catch (cause) {
-			throw new RpcTransportError(
-				"E_COMET_CONNECTION_FAILED",
-				`the socket to ${url} could not be created`,
+			throw new E_COMET_CONNECTION_FAILED(
+				[`the socket to ${url} could not be created`],
 				{ cause },
 			);
 		}
@@ -575,12 +555,7 @@ export function createWebSocketTransport(
 	const transport: RpcTransport = (url, body, { signal }) =>
 		new Promise<unknown>((resolve, reject) => {
 			if (closed) {
-				reject(
-					new RpcTransportError(
-						"E_COMET_TRANSPORT_CLOSED",
-						"the transport is closed",
-					),
-				);
+				reject(new E_COMET_TRANSPORT_CLOSED());
 				return;
 			}
 			if (signal?.aborted) {
@@ -626,9 +601,13 @@ export function createWebSocketTransport(
 			if (timeout !== Number.POSITIVE_INFINITY) {
 				timer = setTimeout(() => {
 					waiting.reject(
-						new RpcTransportError(
-							"E_COMET_TIMEOUT",
-							`no answer within ${timeout} ms${waiting.suspect === undefined ? "" : describeSuspect(waiting.suspect.error)}`,
+						new E_COMET_TIMEOUT(
+							[
+								timeout,
+								waiting.suspect === undefined
+									? ""
+									: describeSuspect(waiting.suspect.error),
+							],
 							waiting.suspect === undefined
 								? undefined
 								: { cause: waiting.suspect.message },
@@ -643,22 +622,18 @@ export function createWebSocketTransport(
 				() => {
 					if (settled) return;
 					if (connection.bufferedAmount > maxBufferedBytes) {
-						waiting.reject(
-							new RpcTransportError(
-								"E_COMET_BACKPRESSURE",
-								`over ${maxBufferedBytes} bytes already wait to be sent`,
-							),
-						);
+						waiting.reject(new E_COMET_BACKPRESSURE([maxBufferedBytes]));
 						return;
 					}
 					try {
 						connection.send(outgoing.text, outgoing.ids.size === 0);
 					} catch (cause) {
 						waiting.reject(
-							new RpcTransportError(
-								"E_COMET_CONNECTION_CLOSED",
-								"the socket refused the message",
-								{ cause },
+							new E_COMET_CONNECTION_CLOSED(
+								["the socket refused the message"],
+								{
+									cause,
+								},
 							),
 						);
 						return;
@@ -676,10 +651,7 @@ export function createWebSocketTransport(
 		close(): void {
 			if (closed) return;
 			closed = true;
-			const error = new RpcTransportError(
-				"E_COMET_TRANSPORT_CLOSED",
-				"the transport was closed",
-			);
+			const error = new E_COMET_TRANSPORT_CLOSED();
 			for (const connection of [...connections.values()]) {
 				connection.shut(1000, "", error);
 			}

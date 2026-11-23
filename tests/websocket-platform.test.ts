@@ -3,13 +3,11 @@
  * real RFC 6455 server answering JSON-RPC: what the scripted socket cannot
  * show — the handshake, real frames, a refused upgrade, a cut connection.
  */
+import { Exception } from "@c9up/flare";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createRpcClient } from "../src/client.js";
 import { isNotification, isObject } from "../src/protocol.js";
-import {
-	createWebSocketTransport,
-	RpcTransportError,
-} from "../src/websocket.js";
+import { createWebSocketTransport } from "../src/websocket.js";
 import {
 	type FixtureServer,
 	type FixtureSocket,
@@ -64,13 +62,13 @@ afterAll(async () => {
 	await server.close();
 });
 
-async function failure(promise: Promise<unknown>): Promise<RpcTransportError> {
+async function failure(promise: Promise<unknown>): Promise<Exception> {
 	const error = await promise.then(
 		() => undefined,
 		(e: unknown) => e,
 	);
-	if (!(error instanceof RpcTransportError)) {
-		throw new Error(`expected an RpcTransportError, got ${String(error)}`);
+	if (!(error instanceof Exception) || !error.code?.startsWith("E_COMET_")) {
+		throw new Error(`expected a comet transport error, got ${String(error)}`);
 	}
 	return error;
 }

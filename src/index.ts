@@ -3,6 +3,7 @@
  * client. Zero framework, zero transport, zero dependency. The browser binding
  * (aurora) and the server binding (Ream's `RpcRouter`) both build on this.
  */
+
 export {
 	createRpcClient,
 	type RpcCall,
@@ -13,6 +14,7 @@ export {
 	type RpcResult,
 	type RpcTransport,
 } from "./client.js";
+export * as errors from "./errors.js";
 export {
 	buildError,
 	buildNotification,
@@ -40,7 +42,6 @@ export {
 export {
 	createWebSocketTransport,
 	type RpcSocket,
-	RpcTransportError,
 	type RpcTransportErrorCode,
 	type RpcWebSocketTransport,
 	type WebSocketTransportOptions,

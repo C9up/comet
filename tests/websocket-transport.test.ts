@@ -3,13 +3,18 @@
  * pairs answers with callers, and what it does when the peer, the network or
  * the caller lets it down.
  */
+import { Exception } from "@c9up/flare";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRpcClient } from "../src/client.js";
-import { buildNotification, RpcRemoteError } from "../src/protocol.js";
+import * as errors from "../src/errors.js";
+import {
+	buildNotification,
+	isRpcShapedError,
+	RpcRemoteError,
+} from "../src/protocol.js";
 import {
 	createWebSocketTransport,
 	type RpcSocket,
-	RpcTransportError,
 	type WebSocketTransportOptions,
 } from "../src/websocket.js";
 
@@ -111,13 +116,13 @@ function reply(to: FakeSocket, id: unknown, result: unknown): void {
 	to.receive(JSON.stringify({ jsonrpc: "2.0", id, result }));
 }
 
-async function failure(promise: Promise<unknown>): Promise<RpcTransportError> {
+async function failure(promise: Promise<unknown>): Promise<Exception> {
 	const error = await promise.then(
 		() => undefined,
 		(e: unknown) => e,
 	);
-	if (!(error instanceof RpcTransportError)) {
-		throw new Error(`expected an RpcTransportError, got ${String(error)}`);
+	if (!(error instanceof Exception) || !error.code?.startsWith("E_COMET_")) {
+		throw new Error(`expected a comet transport error, got ${String(error)}`);
 	}
 	return error;
 }
@@ -731,14 +736,21 @@ describe("close() and what the caller hands over", () => {
 	});
 
 	it("refuses options it cannot honour", () => {
+		const invalid = expect.objectContaining({ code: "E_COMET_INVALID_OPTION" });
 		for (const timeout of [0, -1, Number.NaN, 2 ** 31]) {
-			expect(() => createWebSocketTransport({ timeout })).toThrow(RangeError);
+			expect(() => createWebSocketTransport({ timeout })).toThrow(invalid);
 		}
 		expect(() => createWebSocketTransport({ maxMessageBytes: 0 })).toThrow(
-			RangeError,
+			invalid,
 		);
 		expect(() => createWebSocketTransport({ maxBufferedBytes: -5 })).toThrow(
-			RangeError,
+			invalid,
+		);
+		expect(() => createWebSocketTransport({ timeout: 0 })).toThrow(
+			expect.objectContaining({ code: "E_COMET_INVALID_OPTION" }),
+		);
+		expect(() => createWebSocketTransport({ timeout: 2 ** 31 })).toThrow(
+			expect.objectContaining({ code: "E_COMET_INVALID_OPTION" }),
 		);
 		expect(() =>
 			createWebSocketTransport({ timeout: Number.POSITIVE_INFINITY }),
@@ -746,9 +758,10 @@ describe("close() and what the caller hands over", () => {
 	});
 
 	it("is a transport error, never mistaken for a JSON-RPC one", () => {
-		const error = new RpcTransportError("E_COMET_TIMEOUT", "late");
-		expect(error.name).toBe("RpcTransportError");
-		expect(error).toBeInstanceOf(Error);
+		const error = new errors.E_COMET_TIMEOUT([5, ""]);
+		expect(error.message).toBe("no answer within 5 ms");
+		expect(error).toBeInstanceOf(Exception);
 		expect(error).not.toBeInstanceOf(RpcRemoteError);
+		expect(isRpcShapedError(error)).toBe(false);
 	});
 });
